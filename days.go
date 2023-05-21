@@ -12,7 +12,7 @@ var truncNow time.Time
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Println(`TODO: help text`)
+		fmt.Println("provide a command (until, since, from) and date arguments")
 		return
 	}
 
