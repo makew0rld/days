@@ -20,12 +20,8 @@ func main() {
 
 	cmd := os.Args[1]
 	dates := os.Args[2:]
-	if os.Args[1] == "-f" || os.Args[1] == "--full" {
-		cmd = os.Args[2]
-		dates = os.Args[3:]
-	}
 
-	if len(dates) > 6 {
+	if len(dates) > 7 {
 		die("too many date arguments")
 	}
 	if !contains(cmd, []string{"until", "since", "from"}) {
