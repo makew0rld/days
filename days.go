@@ -78,10 +78,37 @@ func dayTrunc(t time.Time) time.Time {
 }
 
 // parseNoYearDate parses dates like "june 16".
-// It uses the current year as the year.
+// It uses the provided command to determine the year.
 // It always returns a time truncated to the day.
-func parseNoYearDate(dates []string) (time.Time, error) {
+func parseNoYearDate(cmd string, dates []string) (time.Time, error) {
 	dateFmtStr := fmt.Sprintf("%s %s %d", dates[0], dates[1], truncNow.Year())
+	t, err := time.ParseInLocation("Jan 2 2006", dateFmtStr, time.Local)
+	if err != nil {
+		t, err = time.ParseInLocation("January 2 2006", dateFmtStr, time.Local)
+		if err != nil {
+			return time.Time{}, fmt.Errorf("can't parse date: %w", err)
+		}
+	}
+	t = dayTrunc(t)
+	if cmd == "until" {
+		if t.Before(truncNow) {
+			// Must be in the future so increment the year
+			t = t.AddDate(1, 0, 0)
+		}
+	} else if cmd == "since" {
+		if t.After(truncNow) {
+			// Must be in the past so decrement the year
+			t = t.AddDate(-1, 0, 0)
+		}
+	}
+	// For "from" command the current year default is kept
+	return t, nil
+}
+
+// parseYearDate parses dates like "feb 23 2004".
+// It always returns a time truncated to the day.
+func parseYearDate(dates []string) (time.Time, error) {
+	dateFmtStr := fmt.Sprintf("%s %s %s", dates[0], dates[1], dates[2])
 	t, err := time.ParseInLocation("Jan 2 2006", dateFmtStr, time.Local)
 	if err != nil {
 		t, err = time.ParseInLocation("January 2 2006", dateFmtStr, time.Local)
@@ -92,16 +119,12 @@ func parseNoYearDate(dates []string) (time.Time, error) {
 	return dayTrunc(t), nil
 }
 
-// parseNoYearDate parses dates like "feb 23 2004".
+// parseISODate parses dates like "2024-01-17"
 // It always returns a time truncated to the day.
-func parseYearDate(dates []string) (time.Time, error) {
-	dateFmtStr := fmt.Sprintf("%s %s %s", dates[0], dates[1], dates[2])
-	t, err := time.ParseInLocation("Jan 2 2006", dateFmtStr, time.Local)
+func parseISODate(date string) (time.Time, error) {
+	t, err := time.ParseInLocation("2006-01-02", date, time.Local)
 	if err != nil {
-		t, err = time.ParseInLocation("January 2 2006", dateFmtStr, time.Local)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("can't parse date: %w", err)
-		}
+		return time.Time{}, fmt.Errorf("can't parse date: %w", err)
 	}
 	return dayTrunc(t), nil
 }
@@ -125,59 +148,125 @@ func parseDates(cmd string, argdates []string) ([]time.Time, error) {
 	times := make([]time.Time, 0)
 
 	switch len(dates) {
-	case 0, 1:
+	case 0:
 		return nil, fmt.Errorf("too few date arguments")
-	case 2:
-		// Day with no year, like "june 16" or "feb 23"
-		// Year must be determined. The final date must be in the future for
-		// the "until" command, and the past for the "since" command.
-		// If today is that day, the year is kept as this year.
 
-		t, err := parseNoYearDate(dates)
+	case 1:
+		// ISO date
+		t, err := parseISODate(dates[0])
 		if err != nil {
 			return nil, err
 		}
-		if cmd == "until" {
-			if t.Before(truncNow) {
-				// Must be in the future so increment the year
-				t = t.AddDate(1, 0, 0)
-			}
-		} else { // "since"
-			if t.After(truncNow) {
-				// Must be in the past so decrement the year
-				t = t.AddDate(-1, 0, 0)
-			}
-		}
 		times = append(times, t)
+
+	case 2:
+		// Day with no year, like "june 16" or "feb 23"
+		// OR: it's two ISO dates.
+
+		if strings.Contains(dates[0], "-") {
+			// Assume two ISO dates
+			t1, err := parseISODate(dates[0])
+			if err != nil {
+				return nil, err
+			}
+			t2, err := parseISODate(dates[1])
+			if err != nil {
+				return nil, err
+			}
+			times = append(times, t1, t2)
+		} else {
+			// Assume two no-year dates
+			t, err := parseNoYearDate(cmd, dates)
+			if err != nil {
+				return nil, err
+			}
+			times = append(times, t)
+		}
 
 	case 3:
 		// Single date with year, like "feb 23 2004"
-		t, err := parseYearDate(dates)
-		if err != nil {
-			return nil, err
+		// Or ISO date with no year date, like "2000-03-18 march 3" or "march 3 2100-03-18"
+
+		if strings.Contains(dates[0], "-") {
+			// Assume format of "2000-03-18 march 3"
+			t1, err := parseISODate(dates[0])
+			if err != nil {
+				return nil, err
+			}
+			t2, err := parseNoYearDate(cmd, dates[1:])
+			if err != nil {
+				return nil, err
+			}
+			times = append(times, t1, t2)
+		} else if strings.Contains(dates[2], "-") {
+			// Assume format of "march 3 2100-03-18"
+			t1, err := parseNoYearDate(cmd, dates[:2])
+			if err != nil {
+				return nil, err
+			}
+			t2, err := parseISODate(dates[2])
+			if err != nil {
+				return nil, err
+			}
+			times = append(times, t1, t2)
+		} else {
+			// Assume format of "feb 23 2004"
+			t, err := parseYearDate(dates)
+			if err != nil {
+				return nil, err
+			}
+			times = append(times, t)
 		}
-		times = append(times, t)
 
 	case 4:
 		// Two dates with no year, like "jan 3 march 3"
-		// Both years are assumed to be the current year, unless that would
-		// put the first date after the second date. In that case the year of
-		// the second date is incremented
+		// Or ISO date with year date: "2000-03-18 feb 23 2004" or "feb 23 2004 2000-03-18"
 
-		t1, err := parseNoYearDate(dates[:2])
-		if err != nil {
-			return nil, err
+		if strings.Contains(dates[0], "-") {
+			// Assume format of "2000-03-18 feb 23 2004"
+			t1, err := parseISODate(dates[0])
+			if err != nil {
+				return nil, err
+			}
+			t2, err := parseYearDate(dates[1:])
+			if err != nil {
+				return nil, err
+			}
+			times = append(times, t1, t2)
+		} else if strings.Contains(dates[3], "-") {
+			// Assume format of "feb 23 2004 2000-03-18"
+			t1, err := parseYearDate(dates[:3])
+			if err != nil {
+				return nil, err
+			}
+			t2, err := parseISODate(dates[3])
+			if err != nil {
+				return nil, err
+			}
+			times = append(times, t1, t2)
+		} else {
+			// Assume format of "jan 3 march 3"
+			// Both years are assumed to be the current year, unless that would
+			// put the first date after the second date. In that case the year of
+			// the second date is incremented.
+
+			t1, err := parseNoYearDate(cmd, dates[:2])
+			if err != nil {
+				return nil, err
+			}
+			t2, err := parseNoYearDate(cmd, dates[2:])
+			if err != nil {
+				return nil, err
+			}
+			if t1.After(t2) {
+				t2 = t2.AddDate(1, 0, 0)
+			}
+			times = append(times, t1, t2)
 		}
-		t2, err := parseNoYearDate(dates[2:])
-		if err != nil {
-			return nil, err
-		}
-		if t1.After(t2) {
-			t2 = t2.AddDate(1, 0, 0)
-		}
-		times = append(times, t1, t2)
+
 	case 5:
 		// One date with a year and one without, but the order is unknown
+		// No way ISO date can fit in a 5-arg sequence
 		if len(dates[2]) == 4 {
 			// The third arg is 4 chars long, so it must be a year
 			// So the format is: jan 3 2004 march 3
@@ -189,7 +278,7 @@ func parseDates(cmd string, argdates []string) ([]time.Time, error) {
 			if err != nil {
 				return nil, err
 			}
-			t2, err := parseNoYearDate(dates[3:])
+			t2, err := parseNoYearDate(cmd, dates[3:])
 			if err != nil {
 				return nil, err
 			}
@@ -197,7 +286,7 @@ func parseDates(cmd string, argdates []string) ([]time.Time, error) {
 		} else {
 			// Format is the opposite way: jan 3 march 3 2030
 
-			t1, err := parseNoYearDate(dates[:2])
+			t1, err := parseNoYearDate(cmd, dates[:2])
 			if err != nil {
 				return nil, err
 			}
@@ -219,7 +308,7 @@ func parseDates(cmd string, argdates []string) ([]time.Time, error) {
 		}
 		times = append(times, t1, t2)
 	default:
-		// Anything beyond 6 is is guaranteed not to happen due to checks in main()
+		// Anything beyond 6 is guaranteed not to happen due to checks in main()
 		return nil, fmt.Errorf("invalid number of date args (%d) -- how did we get here?", len(dates))
 	}
 

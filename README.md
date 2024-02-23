@@ -12,15 +12,18 @@ Some example commands:
 
 ```
 days until june 16
+days until 2030-07-03
 days since feb 23
 days since 'february 23'
 days since feb 23 2004
+days since 2020-01-01
 days from jan 3 march 3
 days from jan 3 to march 3
 days from jan 3 2004 march 3 2006
 days from 'jan 3 2004' 'march 3 2006'
 days from jan 3 march 3 2030
 days from jan 3 2004 march 3
+days from 2000-03-18 march 3
 ```
 
 The extra day during leap years is taken into account.
